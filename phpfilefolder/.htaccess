@@ -1,0 +1,3 @@
+# 物理保管領域への直接アクセスを禁止（download.php 経由のみ許可）
+Require all denied
+Deny from all

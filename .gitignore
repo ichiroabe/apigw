@@ -1,0 +1,26 @@
+# SQLite DB（ユーザデータ含む）
+data/app.db
+data/app.db-journal
+data/app.db-wal
+data/app.db-shm
+
+# アップロードされた実体ファイル
+phpfilefolder/_storage/*
+!phpfilefolder/_storage/.gitkeep
+
+# OS ジャンク
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# エディタ
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ログ・一時ファイル
+*.log
+*.bak
+*.tmp

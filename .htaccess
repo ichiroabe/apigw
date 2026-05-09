@@ -1,0 +1,4 @@
+# Apache用: PHP実行ファイル以外への直接アクセスを制御
+<FilesMatch "\.(db|sqlite)$">
+  Require all denied
+</FilesMatch>
