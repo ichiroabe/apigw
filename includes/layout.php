@@ -193,6 +193,7 @@ pre { background: var(--pre-bg); }
       <a href="files.php">ファイル</a>
       <a href="board.php">掲示板<?php if ($unread): ?><span class="unread"><?= (int)$unread ?></span><?php endif; ?></a>
       <a href="trash.php">ゴミ箱</a>
+      <a href="help.php">ヘルプ</a>
       <?php if ($user['role'] === 'admin'): ?>
         <a href="users.php">ユーザ管理</a>
         <a href="groups.php">グループ</a>

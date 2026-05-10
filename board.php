@@ -273,3 +273,8 @@ render_header('掲示板', $user);
   </form>
 </div>
 <?php render_footer(); ?>
+    <label>添付ファイル（任意）</label><input type="file" name="attachment">
+    <div style="margin-top:12px;"><button type="submit">投稿</button></div>
+  </form>
+</div>
+<?php render_footer(); ?>

@@ -146,66 +146,84 @@ render_header('スレッド: ' . $thread['subject'], $user);
     日時: <?= h($thread['created_at']) ?>
     <?php if ($thread['updated_at']): ?> / 更新: <?= h($thread['updated_at']) ?><?php endif; ?>
   </p>
-  <pre style="white-space:pre-wrap;font-family:inherit;background:#f9fafb;padding:10px;border-radius:4px;"><?= h($thread['body']) ?></pre>
+  <pre style="white-space:pre-wrap;font-family:inherit;background:var(--pre-bg);padding:10px;border-radius:4px;"><?= h($thread['body']) ?></pre>
   <?php if ($threadAttach): ?>
     📎 <a href="download.php?id=<?= (int)$threadAttach['id'] ?>"><?= h($threadAttach['name']) ?></a>
        <span class="muted">(<?= number_format((int)$threadAttach['size']) ?> B)</span>
   <?php endif; ?>
   <?php if ($user['role'] === 'admin' || (int)$thread['sender_id'] === $uid): ?>
-    <details style="margin-top:10px;"><summary>編集</summary>
-      <form method="post" style="margin-top:8px;">
+    <div style="text-align:right; margin-top:10px;">
+      <details style="display:inline-block; text-align:left; position:relative;"><summary class="btn btn-secondary" style="cursor:pointer;">編集</summary>
+        <form method="post" style="margin-top:8px; width:100%; min-width:300px; padding:12px; border:1px solid var(--border); background:var(--bg); border-radius:6px; box-shadow:0 4px 6px rgba(0,0,0,0.1); position:absolute; right:0; z-index:10;">
+          <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
+          <input type="hidden" name="action" value="edit">
+          <input type="hidden" name="id" value="<?= (int)$thread['id'] ?>">
+          <label>件名</label><input type="text" name="subject" required style="width:100%" value="<?= h($thread['subject']) ?>">
+          <label>本文</label><textarea name="body" required><?= h($thread['body']) ?></textarea>
+          <div style="text-align:right; margin-top:8px;"><button type="submit">更新</button></div>
+        </form>
+      </details>
+      <form method="post" action="board.php" class="inline" style="margin-left:4px;" onsubmit="return confirm('スレッド全体を削除（ゴミ箱へ）。よろしいですか？');">
         <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
-        <input type="hidden" name="action" value="edit">
+        <input type="hidden" name="action" value="delete">
         <input type="hidden" name="id" value="<?= (int)$thread['id'] ?>">
-        <label>件名</label><input type="text" name="subject" required style="width:100%" value="<?= h($thread['subject']) ?>">
-        <label>本文</label><textarea name="body" required><?= h($thread['body']) ?></textarea>
-        <button type="submit" style="margin-top:8px;">更新</button>
+        <button class="btn-danger" type="submit">スレッド削除</button>
       </form>
-    </details>
-    <form method="post" action="board.php" class="inline" style="margin-top:8px;" onsubmit="return confirm('スレッド全体を削除（ゴミ箱へ）。よろしいですか？');">
-      <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
-      <input type="hidden" name="action" value="delete">
-      <input type="hidden" name="id" value="<?= (int)$thread['id'] ?>">
-      <button class="btn-danger" type="submit">スレッド削除</button>
-    </form>
+    </div>
   <?php endif; ?>
 </div>
 
-<div class="card">
-  <h3>返信（<?= count($replies) ?> 件）</h3>
+<div class="card" style="background:var(--pre-bg);">
+  <h3 style="margin-top:0;">返信（<?= count($replies) ?> 件）</h3>
   <?php if (!$replies): ?><p class="muted">まだ返信はありません。</p><?php endif; ?>
-  <?php foreach ($replies as $r): $att = fetch_file($pdo, $r['attachment_file_id']?(int)$r['attachment_file_id']:null); ?>
-    <div style="border-top:1px solid #e5e7eb;padding:10px 0;">
-      <p class="muted" style="margin:0;">
-        #<?= (int)$r['id'] ?> <?= h($r['sender_display'] ?: $r['sender_username']) ?> <?= h($r['created_at']) ?>
-        <?php if ($r['updated_at']): ?><span class="badge edited">編集済</span><?php endif; ?>
-        <?php if ($user['role'] === 'admin' || (int)$r['sender_id'] === $uid): ?>
-          <span style="float:right;">
-            <details style="display:inline-block;"><summary class="btn btn-secondary" style="cursor:pointer;">編集</summary>
-              <form method="post" style="margin-top:8px;">
+  <div id="chat-container" style="display:flex; flex-direction:column; gap:16px;">
+    <?php foreach ($replies as $r): 
+      $att = fetch_file($pdo, $r['attachment_file_id']?(int)$r['attachment_file_id']:null); 
+      $isMe = ((int)$r['sender_id'] === $uid);
+      $align = $isMe ? 'flex-end' : 'flex-start';
+      $bubbleBg = $isMe ? 'var(--btn-bg)' : 'var(--card-bg)';
+      $bubbleColor = $isMe ? 'var(--btn-fg)' : 'var(--fg)';
+    ?>
+      <div style="display:flex; width:100%; justify-content:<?= $align ?>;">
+        <div style="display:flex; flex-direction:column; align-items:<?= $align ?>; max-width:85%;">
+          <?php if (!$isMe): ?>
+            <div class="muted" style="font-size:12px; margin-bottom:4px; margin-left:4px;">
+              <?= h($r['sender_display'] ?: $r['sender_username']) ?>
+            </div>
+          <?php endif; ?>
+          
+          <div style="background:<?= $bubbleBg ?>; color:<?= $bubbleColor ?>; padding:10px 14px; border-radius:16px; box-shadow:0 1px 2px rgba(0,0,0,0.1); border:1px solid var(--border);">
+            <pre style="white-space:pre-wrap;font-family:inherit;margin:0; background:transparent; padding:0; color:inherit; border:none;"><?= h($r['body']) ?></pre>
+            <?php if ($att): ?>
+              <div style="margin-top:8px; font-size:12px;">📎 <a href="download.php?id=<?= (int)$att['id'] ?>" style="color:inherit;text-decoration:underline;"><?= h($att['name']) ?></a></div>
+            <?php endif; ?>
+          </div>
+          
+          <div class="muted" style="font-size:11px; margin-top:4px; display:flex; gap:8px; align-items:center;">
+            <?= h(date('m/d H:i', strtotime($r['created_at']))) ?>
+            <?php if ($r['updated_at']): ?><span class="badge edited" style="font-size:9px; padding:1px 4px;">編集済</span><?php endif; ?>
+            <?php if ($user['role'] === 'admin' || $isMe): ?>
+              <details style="position:relative;"><summary style="cursor:pointer; color:var(--link);">編集</summary>
+                <form method="post" style="margin-top:8px; width:100%; min-width:260px; padding:12px; border:1px solid var(--border); background:var(--bg); border-radius:6px; box-shadow:0 4px 6px rgba(0,0,0,0.1); position:absolute; <?= $isMe ? 'right:0;' : 'left:0;' ?> z-index:10; text-align:left; color:var(--fg);">
+                  <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
+                  <input type="hidden" name="action" value="edit">
+                  <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
+                  <textarea name="body" required style="width:100%;"><?= h($r['body']) ?></textarea>
+                  <div style="text-align:right; margin-top:6px;"><button type="submit" class="btn">更新</button></div>
+                </form>
+              </details>
+              <form method="post" class="inline" onsubmit="return confirm('返信を削除（ゴミ箱へ）しますか？');">
                 <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
-                <input type="hidden" name="action" value="edit">
+                <input type="hidden" name="action" value="delete_reply">
                 <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
-                <textarea name="body" required><?= h($r['body']) ?></textarea>
-                <button type="submit" style="margin-top:6px;">更新</button>
+                <button type="submit" style="background:none; border:none; color:var(--btn-danger-bg); cursor:pointer; padding:0; font-size:11px; text-decoration:underline;">削除</button>
               </form>
-            </details>
-            <form method="post" class="inline" onsubmit="return confirm('返信を削除（ゴミ箱へ）しますか？');">
-              <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
-              <input type="hidden" name="action" value="delete_reply">
-              <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
-              <button class="btn-danger" type="submit">削除</button>
-            </form>
-          </span>
-        <?php endif; ?>
-      </p>
-      <pre style="white-space:pre-wrap;font-family:inherit;margin:6px 0 0;"><?= h($r['body']) ?></pre>
-      <?php if ($att): ?>
-        📎 <a href="download.php?id=<?= (int)$att['id'] ?>"><?= h($att['name']) ?></a>
-           <span class="muted">(<?= number_format((int)$att['size']) ?> B)</span>
-      <?php endif; ?>
-    </div>
-  <?php endforeach; ?>
+            <?php endif; ?>
+          </div>
+        </div>
+      </div>
+    <?php endforeach; ?>
+  </div>
 </div>
 
 <div class="card">
@@ -214,8 +232,48 @@ render_header('スレッド: ' . $thread['subject'], $user);
     <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
     <input type="hidden" name="action" value="reply">
     <textarea name="body" required></textarea>
-    <label>添付（任意）</label><input type="file" name="attachment">
-    <div style="margin-top:10px;"><button type="submit">返信</button></div>
+    <div style="margin-top:10px; display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+      <button type="submit">返信</button>
+      <div class="muted" style="font-size:12px;">
+        📎 添付(任意): <input type="file" name="attachment" style="font-size:12px; padding:0; border:none; background:none; color:inherit;">
+      </div>
+    </div>
   </form>
 </div>
+<?php
+$maxReplyId = 0;
+foreach ($replies as $r) {
+    if ((int)$r['id'] > $maxReplyId) $maxReplyId = (int)$r['id'];
+}
+?>
+<script>
+let lastChatId = <?= $maxReplyId ?>;
+const threadId = <?= (int)$thread['id'] ?>;
+const chatContainer = document.getElementById('chat-container');
+
+// Only poll if chat container exists
+if (chatContainer) {
+    setInterval(() => {
+        fetch(`api_chat.php?thread_id=${threadId}&last_id=${lastChatId}`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.html && data.html.trim() !== '') {
+                    // Append new HTML
+                    chatContainer.insertAdjacentHTML('beforeend', data.html);
+                    lastChatId = data.last_id;
+                    
+                    // Scroll to bottom of page smoothly
+                    window.scrollTo({
+                        top: document.body.scrollHeight,
+                        behavior: 'smooth'
+                    });
+                    
+                    // Optional: play notification sound
+                    // new Audio('notification.mp3').play().catch(e => {});
+                }
+            })
+            .catch(err => console.error('Polling error:', err));
+    }, 3000);
+}
+</script>
 <?php render_footer(); ?>

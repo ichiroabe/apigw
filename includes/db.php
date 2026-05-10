@@ -181,18 +181,29 @@ function shared_folder_modes(PDO $pdo): array {
     $frontier = array_keys($modes);
     while ($frontier) {
         $in = implode(',', array_fill(0, count($frontier), '?'));
-        $stmt = $pdo->prepare("SELECT id, parent_id FROM folders WHERE parent_id IN ($in) AND deleted_at IS NULL");
+        $stmt = $pdo->prepare("SELECT id, parent_id, share_mode FROM folders WHERE parent_id IN ($in) AND deleted_at IS NULL");
         $stmt->execute($frontier);
         $next = [];
         foreach ($stmt->fetchAll() as $r) {
             $id = (int)$r['id'];
             if (!isset($modes[$id])) {
+                if ($modes[(int)$r['parent_id']] === 'private' || $r['share_mode'] === 'private') {
+                    continue; // 親がprivate、または自身がprivateの場合は継承を遮断
+                }
                 $modes[$id] = $modes[(int)$r['parent_id']] ?? 'view';
                 $next[] = $id;
             }
         }
         $frontier = $next;
     }
+    
+    // private指定のフォルダを一覧から除外する（アクセス遮断）
+    foreach ($modes as $id => $mode) {
+        if ($mode === 'private') {
+            unset($modes[$id]);
+        }
+    }
+    
     return $modes;
 }
 
@@ -225,12 +236,15 @@ function acl_folder_modes(PDO $pdo, int $userId): array {
     $frontier = array_keys($modes);
     while ($frontier) {
         $in = implode(',', array_fill(0, count($frontier), '?'));
-        $stmt = $pdo->prepare("SELECT id, parent_id FROM folders WHERE parent_id IN ($in) AND deleted_at IS NULL");
+        $stmt = $pdo->prepare("SELECT id, parent_id, share_mode FROM folders WHERE parent_id IN ($in) AND deleted_at IS NULL");
         $stmt->execute($frontier);
         $next = [];
         foreach ($stmt->fetchAll() as $r) {
             $id = (int)$r['id'];
             if (!isset($modes[$id])) {
+                if ($r['share_mode'] === 'private') {
+                    continue; // 個別アクセス権（ACL）の継承であっても、遮断設定があればストップ
+                }
                 $modes[$id] = $modes[(int)$r['parent_id']];
                 $next[] = $id;
             }

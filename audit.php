@@ -3,6 +3,18 @@ require_once __DIR__ . '/includes/layout.php';
 $me = require_admin();
 $pdo = db();
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verify_csrf();
+    $actionType = $_POST['action_type'] ?? '';
+    if ($actionType === 'clear_all') {
+        $pdo->exec('DELETE FROM audit_log');
+        audit_log($pdo, $me, 'audit_clear', null, null, null, 'Cleared all logs');
+        flash_set('すべての監査ログを削除しました。', 'success');
+        header('Location: audit.php');
+        exit;
+    }
+}
+
 $kw  = trim((string)($_GET['kw'] ?? ''));
 $act = trim((string)($_GET['action'] ?? ''));
 $page = max(1, (int)($_GET['page'] ?? 1));
@@ -12,7 +24,23 @@ $where = []; $params = [];
 if ($kw !== '') { $where[] = '(username LIKE ? OR target_name LIKE ? OR meta LIKE ?)'; $like = '%'.$kw.'%'; $params[]=$like;$params[]=$like;$params[]=$like; }
 if ($act !== '') { $where[] = 'action = ?'; $params[] = $act; }
 $wsql = $where ? ' WHERE ' . implode(' AND ', $where) : '';
-$total = (int)($pdo->prepare('SELECT COUNT(*) c FROM audit_log' . $wsql)->execute($params) ?? 0);
+
+if (isset($_GET['export']) && $_GET['export'] === 'csv') {
+    $st = $pdo->prepare('SELECT * FROM audit_log' . $wsql . ' ORDER BY id DESC');
+    $st->execute($params);
+    header('Content-Type: text/csv; charset=UTF-8');
+    echo "\xEF\xBB\xBF"; // UTF-8 BOM
+    header('Content-Disposition: attachment; filename="audit_log_' . date('Ymd_His') . '.csv"');
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['日時', 'ユーザ', 'action', '対象', 'meta']);
+    while ($r = $st->fetch()) {
+        $targetStr = ($r['target_type']?:'-').' #'.($r['target_id']??'-').' '.($r['target_name']??'');
+        fputcsv($out, [$r['created_at'], $r['username']??'-', $r['action'], $targetStr, $r['meta']??'']);
+    }
+    fclose($out);
+    exit;
+}
+
 $cs = $pdo->prepare('SELECT COUNT(*) c FROM audit_log' . $wsql); $cs->execute($params);
 $total = (int)$cs->fetch()['c'];
 $pages = max(1, (int)ceil($total / $per));
@@ -32,7 +60,15 @@ $actions = $pdo->query('SELECT DISTINCT action FROM audit_log ORDER BY action')-
 render_header('監査ログ', $me);
 ?>
 <div class="card">
-  <h2>監査ログ</h2>
+  <div style="display:flex; justify-content:space-between; align-items:center;">
+    <h2 style="margin:0;">監査ログ</h2>
+    <form method="post" onsubmit="return confirm('本当にすべての監査ログを削除しますか？この操作は取り消せません。');" style="margin:0;">
+      <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
+      <input type="hidden" name="action_type" value="clear_all">
+      <button type="submit" class="btn-danger">全ログ削除</button>
+    </form>
+  </div>
+  <hr style="margin: 16px 0; border: none; border-top: 1px solid var(--border);">
   <form method="get" style="margin-bottom:8px;">
     <div class="row" style="align-items:end;">
       <div><label>キーワード（ユーザ名/対象名/meta）</label><input type="text" name="kw" value="<?= h($kw) ?>" style="width:100%"></div>
@@ -41,7 +77,11 @@ render_header('監査ログ', $me);
           <?php foreach ($actions as $a): ?><option value="<?= h($a) ?>" <?= $a===$act?'selected':'' ?>><?= h($a) ?></option><?php endforeach; ?>
         </select>
       </div>
-      <div style="flex:0 0 auto;"><button>検索</button> <a class="btn btn-secondary" href="audit.php">クリア</a></div>
+      <div style="flex:0 0 auto;">
+        <button type="submit" class="btn">検索</button> 
+        <a class="btn btn-secondary" href="audit.php">クリア</a>
+        <button type="submit" name="export" value="csv" class="btn btn-secondary" style="margin-left: 8px;">CSVダウンロード</button>
+      </div>
     </div>
   </form>
   <p class="muted">該当 <?= (int)$total ?> 件 / <?= (int)$page ?>/<?= (int)$pages ?> ページ</p>

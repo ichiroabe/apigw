@@ -59,26 +59,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'upload') {
         if (!$writable) {
             flash_set('このフォルダにアップロードする権限がありません。', 'error');
-        } elseif (empty($_FILES['file']) || $_FILES['file']['error'] === UPLOAD_ERR_NO_FILE) {
+        } elseif (empty($_FILES['files']['name'][0])) {
             flash_set('ファイルが選択されていません。', 'error');
-        } elseif ($_FILES['file']['error'] !== UPLOAD_ERR_OK) {
-            flash_set('アップロードに失敗しました（コード: ' . (int)$_FILES['file']['error'] . '）。', 'error');
         } else {
-            $orig = basename(str_replace('\\', '/', $_FILES['file']['name']));
-            if ($orig === '' || strlen($orig) > 255) {
-                flash_set('ファイル名が不正です。', 'error');
-            } else {
+            $successCount = 0;
+            $failCount = 0;
+            $count = count($_FILES['files']['name']);
+            for ($i = 0; $i < $count; $i++) {
+                if ($_FILES['files']['error'][$i] === UPLOAD_ERR_NO_FILE) continue;
+                if ($_FILES['files']['error'][$i] !== UPLOAD_ERR_OK) {
+                    $failCount++;
+                    continue;
+                }
+                $orig = basename(str_replace('\\', '/', $_FILES['files']['name'][$i]));
+                if ($orig === '' || strlen($orig) > 255) {
+                    $failCount++;
+                    continue;
+                }
                 $stored = bin2hex(random_bytes(16));
                 $dest = storage_dir() . '/' . $stored;
-                if (move_uploaded_file($_FILES['file']['tmp_name'], $dest)) {
+                if (move_uploaded_file($_FILES['files']['tmp_name'][$i], $dest)) {
                     $pdo->prepare('INSERT INTO files (name, folder_id, owner_id, size, mime_type, stored_name) VALUES (?,?,?,?,?,?)')
-                        ->execute([$orig, $current['id'] ?? null, $uid, (int)$_FILES['file']['size'], $_FILES['file']['type'] ?: null, $stored]);
+                        ->execute([$orig, $current['id'] ?? null, $uid, (int)$_FILES['files']['size'][$i], $_FILES['files']['type'][$i] ?: null, $stored]);
                     $newId = (int)$pdo->lastInsertId();
-                    audit_log($pdo, $user, 'file_upload', 'file', $newId, $orig, ['size'=>(int)$_FILES['file']['size'], 'folder_id'=>$current['id']??null]);
-                    flash_set('アップロードしました: ' . $orig, 'success');
+                    audit_log($pdo, $user, 'file_upload', 'file', $newId, $orig, ['size'=>(int)$_FILES['files']['size'][$i], 'folder_id'=>$current['id']??null]);
+                    $successCount++;
                 } else {
-                    flash_set('保存に失敗しました。', 'error');
+                    $failCount++;
                 }
+            }
+            if ($successCount > 0 && $failCount === 0) {
+                flash_set("{$successCount}件のファイルをアップロードしました。", 'success');
+            } elseif ($successCount > 0 && $failCount > 0) {
+                flash_set("{$successCount}件のアップロードに成功し、{$failCount}件失敗しました。", 'warn');
+            } elseif ($failCount > 0) {
+                flash_set("アップロードに失敗しました（{$failCount}件）。", 'error');
+            } else {
+                flash_set('有効なファイルがアップロードされませんでした。', 'error');
             }
         }
     } elseif ($action === 'rename_file' || $action === 'rename_folder') {
@@ -156,10 +173,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $st->execute([$id]); $f = $st->fetch();
         if (!$f) { flash_set('ファイルが見つかりません。','error'); }
         else {
-            $parent = $f['folder_id'] ? fetch_folder($pdo,(int)$f['folder_id']) : null;
-            $pmode = effective_mode_for($pdo, $user, $parent, $sharedModes, $aclModes);
-            if (!$isAdmin && (int)$f['owner_id'] !== $uid && $pmode !== 'edit') {
-                flash_set('削除権限がありません。', 'error');
+            if (!$isAdmin && (int)$f['owner_id'] !== $uid) {
+                flash_set('削除権限がありません（所有者のみ削除可能です）。', 'error');
             } else {
                 $pdo->prepare('UPDATE files SET deleted_at = CURRENT_TIMESTAMP WHERE id=?')->execute([$id]);
                 audit_log($pdo, $user, 'file_trash', 'file', $id, $f['name']);
@@ -171,19 +186,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $f = fetch_folder($pdo, $id);
         if (!$f) { flash_set('フォルダが見つかりません。','error'); }
         else {
-            // 共有 root（share_mode が設定されているフォルダ自身）は所有者/admin のみ
-            $isSharedRoot = !empty($f['share_mode']);
             $allowed = $isAdmin || (int)$f['owner_id'] === $uid;
-            if (!$allowed && $isSharedRoot) {
-                flash_set('共有 root は所有者または管理者のみ削除できます。', 'error');
-            } elseif (!$allowed) {
-                $parent = $f['parent_id'] ? fetch_folder($pdo,(int)$f['parent_id']) : null;
-                $pmode = effective_mode_for($pdo, $user, $parent, $sharedModes, $aclModes);
-                if ($pmode !== 'edit') {
-                    flash_set('削除権限がありません。', 'error');
-                    header('Location: files.php' . ($currentId?'?folder='.$currentId:'')); exit;
-                }
-                $allowed = true;
+            if (!$allowed) {
+                flash_set('削除権限がありません（所有者のみ削除可能です）。', 'error');
+                header('Location: files.php' . ($currentId?'?folder='.$currentId:'')); exit;
             }
             if ($allowed) {
                 // 配下の他ユーザコンテンツ件数を数える（警告用 meta）
@@ -213,10 +219,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$f) { flash_set('フォルダが見つかりません。','error'); }
         elseif (!$isAdmin && (int)$f['owner_id'] !== $uid) { flash_set('共有設定変更は所有者または管理者のみです。','error'); }
         else {
-            $newMode = in_array($mode, ['view','edit'], true) ? $mode : null;
-            $pdo->prepare('UPDATE folders SET share_mode=?, is_shared=? WHERE id=?')->execute([$newMode, $newMode?1:0, $id]);
+            $newMode = in_array($mode, ['view','edit','private'], true) ? $mode : null;
+            $isShared = in_array($newMode, ['view','edit'], true) ? 1 : 0;
+            $pdo->prepare('UPDATE folders SET share_mode=?, is_shared=? WHERE id=?')->execute([$newMode, $isShared, $id]);
             audit_log($pdo, $user, 'folder_share', 'folder', $id, $f['name'], ['mode'=>$newMode]);
-            flash_set($newMode ? "全員に共有しました（{$newMode}）。" : '共有を解除しました。', 'success');
+            $msg = $newMode === 'private' ? '非共有（遮断）に設定しました。' : ($newMode ? "全員に共有しました（{$newMode}）。" : '共有を解除しました（継承）。');
+            flash_set($msg, 'success');
         }
     }
     header('Location: files.php' . ($currentId ? ('?folder=' . $currentId) : ''));
@@ -258,13 +266,46 @@ $fileQ   .= ' ORDER BY f.name';
 $f1 = $pdo->prepare($folderQ); $f1->execute($params); $folders = $f1->fetchAll();
 $f2 = $pdo->prepare($fileQ);   $f2->execute($params); $files   = $f2->fetchAll();
 
-// 移動先候補（書込可な自分のフォルダ）
+// 移動先候補を階層（フルパス）で構築
+$allFolders = $pdo->query('SELECT id, name, parent_id, owner_id, share_mode FROM folders WHERE deleted_at IS NULL')->fetchAll();
+$folderById = [];
+foreach ($allFolders as $f) {
+    $f['children'] = [];
+    $folderById[$f['id']] = $f;
+}
+$roots = [];
+foreach ($allFolders as $f) {
+    if ($f['parent_id'] && isset($folderById[$f['parent_id']])) {
+        $folderById[$f['parent_id']]['children'][] = $f['id'];
+    } else {
+        $roots[] = $f['id'];
+    }
+}
+$sortByName = function($aId, $bId) use (&$folderById) {
+    return strcasecmp($folderById[$aId]['name'], $folderById[$bId]['name']);
+};
+usort($roots, $sortByName);
+foreach ($folderById as &$f) {
+    usort($f['children'], $sortByName);
+}
+unset($f);
+
 $moveTargets = [];
-$mt = $pdo->prepare('SELECT id, name, parent_id, owner_id, share_mode FROM folders WHERE deleted_at IS NULL ORDER BY name');
-$mt->execute();
-foreach ($mt->fetchAll() as $f) {
+$traverse = function($id, $pathStr) use (&$traverse, &$folderById, &$moveTargets, $user, $sharedModes, $aclModes) {
+    $f = $folderById[$id];
     $m = effective_folder_mode($user, $f, $sharedModes, $aclModes);
-    if ($m === 'edit') $moveTargets[] = $f;
+    $currentPath = $pathStr === '' ? $f['name'] : ($pathStr . ' / ' . $f['name']);
+    
+    if ($m === 'edit') {
+        $f['display_path'] = $currentPath;
+        $moveTargets[] = $f;
+    }
+    foreach ($f['children'] as $childId) {
+        $traverse($childId, $currentPath);
+    }
+};
+foreach ($roots as $rootId) {
+    $traverse($rootId, '');
 }
 
 $crumbs = build_breadcrumb($pdo, $currentId);
@@ -299,12 +340,12 @@ function apiphpRename(btn) {
       <?php else: ?>
         <span class="crumb-locked"><?= h($c['name']) ?></span>
       <?php endif; ?>
-      <?php if (!empty($c['share_mode'])): ?><span class="badge <?= $c['share_mode']==='view'?'shared-view':'shared' ?>">🌐 共有(<?= h($c['share_mode']) ?>)</span><?php endif; ?>
+      <?php if (($c['share_mode']??'') === 'view' || ($c['share_mode']??'') === 'edit'): ?><span class="badge <?= $c['share_mode']==='view'?'shared-view':'shared' ?>">🌐 共有(<?= h($c['share_mode']) ?>)</span><?php elseif (($c['share_mode']??'') === 'private'): ?><span class="badge" style="background-color:#666;color:#fff;">🔒 非共有</span><?php endif; ?>
     <?php endforeach; ?>
   </div>
   <p class="muted">
     <?php if ($isAdmin): ?>管理者: 全フォルダ・ファイルが見えます。
-    <?php else: ?>一般ユーザ: 自分の作成 + 共有/ACL されたフォルダ配下を表示します。<?php endif; ?>
+    <?php else: ?>一般ユーザ: 自分が作成したフォルダ、および「共有」や「個別アクセス権」が付与されたフォルダを表示します。<?php endif; ?>
   </p>
   <div style="margin-bottom:8px;">
     <?php if ($isAdmin): ?>
@@ -324,15 +365,17 @@ function apiphpRename(btn) {
     <?php foreach ($folders as $f):
       $owns = (int)$f['owner_id'] === $uid || $isAdmin;
       $parentMode = $current ? $currentMode : 'edit';
-      $canDelete = $owns || ($parentMode === 'edit' && empty($f['share_mode']));
+      $canDelete = $owns;
       $canRename = $owns || $parentMode === 'edit';
     ?>
       <tr>
         <td>📁 フォルダ</td>
         <td>
           <a href="files.php?folder=<?= (int)$f['id'] ?>"><?= h($f['name']) ?></a>
-          <?php if (!empty($f['share_mode'])): ?>
+          <?php if (($f['share_mode']??'') === 'view' || ($f['share_mode']??'') === 'edit'): ?>
             <span class="badge <?= $f['share_mode']==='view'?'shared-view':'shared' ?>">🌐 共有(<?= h($f['share_mode']) ?>)</span>
+          <?php elseif (($f['share_mode']??'') === 'private'): ?>
+            <span class="badge" style="background-color:#666;color:#fff;">🔒 非共有</span>
           <?php endif; ?>
         </td>
         <td><?= h($f['owner_display'] ?: $f['owner_username']) ?></td>
@@ -345,9 +388,10 @@ function apiphpRename(btn) {
               <input type="hidden" name="action" value="set_share">
               <input type="hidden" name="id" value="<?= (int)$f['id'] ?>">
               <select name="share_mode" onchange="this.form.submit()">
-                <option value=""     <?= empty($f['share_mode'])?'selected':''         ?>>非共有</option>
-                <option value="view" <?= ($f['share_mode']??'')==='view'?'selected':'' ?>>共有(view)</option>
-                <option value="edit" <?= ($f['share_mode']??'')==='edit'?'selected':'' ?>>共有(edit)</option>
+                <option value=""        <?= empty($f['share_mode'])?'selected':''           ?>>継承(未設定)</option>
+                <option value="private" <?= ($f['share_mode']??'')==='private'?'selected':'' ?>>非共有(遮断)</option>
+                <option value="view"    <?= ($f['share_mode']??'')==='view'?'selected':''   ?>>共有(view)</option>
+                <option value="edit"    <?= ($f['share_mode']??'')==='edit'?'selected':''   ?>>共有(edit)</option>
               </select>
             </form>
           <?php endif; ?>
@@ -366,11 +410,11 @@ function apiphpRename(btn) {
               <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
               <input type="hidden" name="action" value="move_folder">
               <input type="hidden" name="id" value="<?= (int)$f['id'] ?>">
-              <select name="dest" onchange="if(confirm('移動しますか？'))this.form.submit()">
+              <select name="dest" onchange="if(confirm('移動しますか？'))this.form.submit()" style="max-width:200px;">
                 <option value="">移動先...</option>
                 <option value="0">ルートへ</option>
                 <?php foreach ($moveTargets as $mt): if ((int)$mt['id']===(int)$f['id']) continue; ?>
-                  <option value="<?= (int)$mt['id'] ?>"><?= h($mt['name']) ?></option>
+                  <option value="<?= (int)$mt['id'] ?>"><?= h($mt['display_path']) ?></option>
                 <?php endforeach; ?>
               </select>
             </form>
@@ -414,20 +458,22 @@ function apiphpRename(btn) {
               <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
               <input type="hidden" name="action" value="move_file">
               <input type="hidden" name="id" value="<?= (int)$f['id'] ?>">
-              <select name="dest" onchange="if(confirm('移動しますか？'))this.form.submit()">
+              <select name="dest" onchange="if(confirm('移動しますか？'))this.form.submit()" style="max-width:200px;">
                 <option value="">移動先...</option>
                 <option value="0">ルートへ</option>
                 <?php foreach ($moveTargets as $mt): ?>
-                  <option value="<?= (int)$mt['id'] ?>"><?= h($mt['name']) ?></option>
+                  <option value="<?= (int)$mt['id'] ?>"><?= h($mt['display_path']) ?></option>
                 <?php endforeach; ?>
               </select>
             </form>
+            <?php if ($owns): ?>
             <form method="post" class="inline" onsubmit="return confirm('ゴミ箱へ移動します。よろしいですか？');">
               <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
               <input type="hidden" name="action" value="delete_file">
               <input type="hidden" name="id" value="<?= (int)$f['id'] ?>">
               <button class="btn-danger" type="submit">削除</button>
             </form>
+            <?php endif; ?>
           <?php endif; ?>
         </td>
       </tr>
@@ -447,15 +493,60 @@ function apiphpRename(btn) {
       <button type="submit">作成</button>
     </form>
   </div>
-  <div class="card">
-    <h3>ファイルアップロード</h3>
-    <form method="post" enctype="multipart/form-data">
+  <div class="card" id="drop-zone" style="border: 2px dashed var(--input-border); border-radius: 6px; text-align: center; padding: 30px 20px; transition: background-color 0.2s; cursor: pointer;">
+    <h3 style="margin-top:0;">ファイルアップロード</h3>
+    <p class="muted">ここにファイルをドラッグ＆ドロップ、またはクリックして選択してください（複数可）</p>
+    <form method="post" enctype="multipart/form-data" id="upload-form">
       <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
       <input type="hidden" name="action" value="upload">
-      <input type="file" name="file" required>
-      <button type="submit">アップロード</button>
+      <input type="file" name="files[]" id="file-input" multiple style="display:none;">
     </form>
   </div>
+  <script>
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+    const uploadForm = document.getElementById('upload-form');
+
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+      dropZone.addEventListener(eventName, preventDefaults, false);
+      document.body.addEventListener(eventName, preventDefaults, false);
+    });
+    
+    function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+      dropZone.addEventListener(eventName, () => {
+        dropZone.style.borderColor = 'var(--link)';
+        dropZone.style.backgroundColor = 'rgba(0,0,0,0.05)';
+      }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+      dropZone.addEventListener(eventName, () => {
+        dropZone.style.borderColor = 'var(--input-border)';
+        dropZone.style.backgroundColor = '';
+      }, false);
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+      let dt = e.dataTransfer;
+      let files = dt.files;
+      if (files && files.length > 0) {
+        fileInput.files = files;
+        uploadForm.submit();
+      }
+    });
+
+    dropZone.addEventListener('click', () => {
+      fileInput.click();
+    });
+
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files && fileInput.files.length > 0) {
+        uploadForm.submit();
+      }
+    });
+  </script>
 </div>
 <?php elseif ($currentMode === 'view'): ?>
   <div class="card muted">このフォルダは閲覧専用です（書き込み権限がありません）。</div>

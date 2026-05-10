@@ -49,7 +49,7 @@ render_header('グループ管理', $me);
 ?>
 <div class="card">
   <h2>グループ管理</h2>
-  <p class="muted">グループは folder_acl と組み合わせて、フォルダの部分共有（特定ユーザ・グループのみ閲覧/編集）に使えます。</p>
+  <p class="muted">グループは「個別アクセス権」と組み合わせて、フォルダの限定共有（特定のグループのみ閲覧/編集）に使えます。</p>
   <table>
     <thead><tr><th>ID</th><th>名前</th><th>説明</th><th>メンバー</th><th>操作</th></tr></thead>
     <tbody>
