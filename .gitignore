@@ -10,6 +10,7 @@ phpfilefolder/_storage/*
 
 # OS ジャンク
 .DS_Store
+._*
 Thumbs.db
 desktop.ini
 

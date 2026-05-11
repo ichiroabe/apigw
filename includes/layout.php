@@ -29,7 +29,7 @@ function render_header(string $title, ?array $user = null): void {
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title><?= h($title) ?> - エーピーアイ</title>
+<title><?= h($title) ?> - <?= h(APP_NAME) ?></title>
 <style>
 /* テーマ別カラー変数 */
 .theme-light {
@@ -186,7 +186,7 @@ pre { background: var(--pre-bg); }
 </head>
 <body class="theme-<?= h($theme) ?>">
 <header>
-  <h1>エーピーアイ</h1>
+  <h1><?= h(APP_NAME) ?></h1>
   <nav>
     <?php if ($user): ?>
       <a href="dashboard.php">ホーム</a>
