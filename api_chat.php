@@ -124,9 +124,9 @@ foreach ($replies as $r) {
 $html = ob_get_clean();
 
 if ($markIds) {
-    $ins = $pdo->prepare('INSERT OR IGNORE INTO post_reads (post_id, user_id) VALUES (?, ?)');
+    $ins = $pdo->prepare('INSERT OR IGNORE INTO post_reads (post_id, user_id, read_at) VALUES (?, ?, ?)');
     foreach ($markIds as $mid) {
-        $ins->execute([$mid, $uid]);
+        $ins->execute([$mid, $uid, now_jst()]);
     }
 }
 

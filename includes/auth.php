@@ -95,8 +95,8 @@ function login_locked(PDO $pdo, string $username): bool {
 }
 function record_login_attempt(PDO $pdo, string $username, bool $success): void {
     $ip = $_SERVER['REMOTE_ADDR'] ?? null;
-    $pdo->prepare('INSERT INTO login_attempts (username, ip, success) VALUES (?,?,?)')
-        ->execute([$username, $ip, $success ? 1 : 0]);
+    $pdo->prepare('INSERT INTO login_attempts (username, ip, success, attempted_at) VALUES (?,?,?,?)')
+        ->execute([$username, $ip, $success ? 1 : 0, now_jst()]);
 }
 
 /** 「ファイル/フォルダの実効権限」: returns 'edit'|'view'|null */

@@ -47,14 +47,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($orig !== '' && strlen($orig) <= 255) {
                     $stored = bin2hex(random_bytes(16));
                     if (move_uploaded_file($_FILES['attachment']['tmp_name'], storage_dir().'/'.$stored)) {
-                        $pdo->prepare('INSERT INTO files (name, folder_id, owner_id, size, mime_type, stored_name) VALUES (?,?,?,?,?,?)')
-                            ->execute([$orig, null, $uid, (int)$_FILES['attachment']['size'], $_FILES['attachment']['type'] ?: null, $stored]);
+                        $pdo->prepare('INSERT INTO files (name, folder_id, owner_id, size, mime_type, stored_name, created_at) VALUES (?,?,?,?,?,?,?)')
+                            ->execute([$orig, null, $uid, (int)$_FILES['attachment']['size'], $_FILES['attachment']['type'] ?: null, $stored, now_jst()]);
                         $attachId = (int)$pdo->lastInsertId();
                     }
                 }
             }
-            $pdo->prepare('INSERT INTO posts (sender_id, recipient_id, subject, body, parent_post_id, attachment_file_id) VALUES (?,?,?,?,?,?)')
-                ->execute([$uid, $thread['recipient_id'], '', $body, $thread['id'], $attachId]);
+            $pdo->prepare('INSERT INTO posts (sender_id, recipient_id, subject, body, parent_post_id, attachment_file_id, created_at) VALUES (?,?,?,?,?,?,?)')
+                ->execute([$uid, $thread['recipient_id'], '', $body, $thread['id'], $attachId, now_jst()]);
             $rid = (int)$pdo->lastInsertId();
             audit_log($pdo, $user, 'post_reply', 'post', $rid, $thread['subject']);
             flash_set('返信を投稿しました。','success');
@@ -70,11 +70,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         elseif ($body === '') { flash_set('本文は必須です。','error'); }
         else {
             if ($p['parent_post_id'] === null && $newSub !== null && $newSub !== '') {
-                $pdo->prepare('UPDATE posts SET subject=?, body=?, updated_at=CURRENT_TIMESTAMP WHERE id=?')
-                    ->execute([$newSub, $body, $id]);
+                $pdo->prepare('UPDATE posts SET subject=?, body=?, updated_at=? WHERE id=?')
+                    ->execute([$newSub, $body, now_jst(), $id]);
             } else {
-                $pdo->prepare('UPDATE posts SET body=?, updated_at=CURRENT_TIMESTAMP WHERE id=?')
-                    ->execute([$body, $id]);
+                $pdo->prepare('UPDATE posts SET body=?, updated_at=? WHERE id=?')
+                    ->execute([$body, now_jst(), $id]);
             }
             audit_log($pdo, $user, 'post_edit', 'post', $id, $p['subject']);
             flash_set('投稿を更新しました。','success');
@@ -86,7 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$r) { flash_set('返信が見つかりません。','error'); }
         elseif ($user['role'] !== 'admin' && (int)$r['sender_id'] !== $uid) { flash_set('削除権限がありません。','error'); }
         else {
-            $pdo->prepare('UPDATE posts SET deleted_at=CURRENT_TIMESTAMP WHERE id=?')->execute([$rid]);
+            $pdo->prepare('UPDATE posts SET deleted_at=? WHERE id=?')->execute([now_jst(), $rid]);
             audit_log($pdo, $user, 'post_trash', 'post', $rid, '(reply)');
             flash_set('返信をゴミ箱へ移動しました。','success');
         }
@@ -100,8 +100,8 @@ $markIds = [(int)$thread['id']];
 $ch = $pdo->prepare('SELECT id FROM posts WHERE parent_post_id=? AND deleted_at IS NULL');
 $ch->execute([$thread['id']]);
 foreach ($ch->fetchAll() as $r) $markIds[] = (int)$r['id'];
-$ins = $pdo->prepare('INSERT OR IGNORE INTO post_reads (post_id, user_id) VALUES (?, ?)');
-foreach ($markIds as $mid) $ins->execute([$mid, $uid]);
+$ins = $pdo->prepare('INSERT OR IGNORE INTO post_reads (post_id, user_id, read_at) VALUES (?, ?, ?)');
+foreach ($markIds as $mid) $ins->execute([$mid, $uid, now_jst()]);
 
 $rep = $pdo->prepare(
     'SELECT p.*, s.username AS sender_username, s.display_name AS sender_display

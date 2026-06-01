@@ -23,8 +23,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flash_set('メールアドレスの形式が正しくありません。', 'error');
         } else {
             try {
-                $stmt = $pdo->prepare('INSERT INTO users (username, password_hash, role, display_name, email) VALUES (?, ?, ?, ?, ?)');
-                $stmt->execute([$username, password_hash($password, PASSWORD_DEFAULT), $role, $display_name ?: null, $email ?: null]);
+                $stmt = $pdo->prepare('INSERT INTO users (username, password_hash, role, display_name, email, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+                $stmt->execute([$username, password_hash($password, PASSWORD_DEFAULT), $role, $display_name ?: null, $email ?: null, now_jst()]);
                 $newId = (int)$pdo->lastInsertId();
                 audit_log($pdo, $me, 'user_create', 'user', $newId, $username, ['role'=>$role]);
                 flash_set('ユーザを作成しました。', 'success');
@@ -89,7 +89,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $imported = 0; $updated = 0; $skipped = 0; $errors = [];
             $rowNum = 0;
-            $insSt = $pdo->prepare('INSERT INTO users (username, password_hash, role, display_name, email) VALUES (?, ?, ?, ?, ?)');
+            $insSt = $pdo->prepare('INSERT INTO users (username, password_hash, role, display_name, email, created_at) VALUES (?, ?, ?, ?, ?, ?)');
             $updSt = $pdo->prepare('UPDATE users SET password_hash=?, role=?, display_name=?, email=? WHERE username=?');
             $existSt = $pdo->prepare('SELECT id FROM users WHERE username = ?');
 
@@ -142,7 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         audit_log($pdo, $me, 'user_csv_update', 'user', (int)$exists['id'], $username, ['role'=>$role]);
                         $updated++;
                     } else {
-                        $insSt->execute([$username, password_hash($password, PASSWORD_DEFAULT), $role, $display_name ?: null, $email ?: null]);
+                        $insSt->execute([$username, password_hash($password, PASSWORD_DEFAULT), $role, $display_name ?: null, $email ?: null, now_jst()]);
                         $newId = (int)$pdo->lastInsertId();
                         audit_log($pdo, $me, 'user_csv_create', 'user', $newId, $username, ['role'=>$role]);
                         $imported++;

@@ -159,6 +159,10 @@ function seed_initial_admin(PDO $pdo): void {
     $stmt->execute(['admin', password_hash('admin', PASSWORD_DEFAULT), 'admin', '管理者']);
 }
 
+function now_jst(): string {
+    return (new DateTime('now', new DateTimeZone('Asia/Tokyo')))->format('Y-m-d H:i:s');
+}
+
 function storage_dir(): string {
     $dir = __DIR__ . '/../phpfilefolder/_storage';
     if (!is_dir($dir)) mkdir($dir, 0777, true);
@@ -256,11 +260,12 @@ function acl_folder_modes(PDO $pdo, int $userId): array {
 }
 
 function audit_log(PDO $pdo, ?array $user, string $action, ?string $targetType = null, ?int $targetId = null, ?string $targetName = null, $meta = null): void {
-    $stmt = $pdo->prepare('INSERT INTO audit_log (user_id, username, action, target_type, target_id, target_name, meta) VALUES (?,?,?,?,?,?,?)');
+    $stmt = $pdo->prepare('INSERT INTO audit_log (user_id, username, action, target_type, target_id, target_name, meta, created_at) VALUES (?,?,?,?,?,?,?,?)');
     $stmt->execute([
         $user['id'] ?? null,
         $user['username'] ?? null,
         $action, $targetType, $targetId, $targetName,
-        $meta === null ? null : (is_string($meta) ? $meta : json_encode($meta, JSON_UNESCAPED_UNICODE))
+        $meta === null ? null : (is_string($meta) ? $meta : json_encode($meta, JSON_UNESCAPED_UNICODE)),
+        now_jst()
     ]);
 }

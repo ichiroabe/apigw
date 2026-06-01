@@ -12,7 +12,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($name === '') { flash_set('グループ名は必須です。','error'); }
         else {
             try {
-                $pdo->prepare('INSERT INTO groups (name, description) VALUES (?,?)')->execute([$name,$desc?:null]);
+                $pdo->prepare('INSERT INTO groups (name, description, created_at) VALUES (?,?,?)')->execute([$name,$desc?:null,now_jst()]);
                 $gid = (int)$pdo->lastInsertId();
                 audit_log($pdo,$me,'group_create','group',$gid,$name);
                 flash_set('グループを作成しました。','success');

@@ -50,8 +50,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif (!$writable) {
             flash_set('このフォルダ内に作成する権限がありません。', 'error');
         } else {
-            $stmt = $pdo->prepare('INSERT INTO folders (name, parent_id, owner_id) VALUES (?, ?, ?)');
-            $stmt->execute([$name, $current['id'] ?? null, $uid]);
+            $stmt = $pdo->prepare('INSERT INTO folders (name, parent_id, owner_id, created_at) VALUES (?, ?, ?, ?)');
+            $stmt->execute([$name, $current['id'] ?? null, $uid, now_jst()]);
             $newId = (int)$pdo->lastInsertId();
             audit_log($pdo, $user, 'folder_create', 'folder', $newId, $name, ['parent_id'=>$current['id']??null]);
             flash_set('フォルダを作成しました。', 'success');
@@ -79,8 +79,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stored = bin2hex(random_bytes(16));
                 $dest = storage_dir() . '/' . $stored;
                 if (move_uploaded_file($_FILES['files']['tmp_name'][$i], $dest)) {
-                    $pdo->prepare('INSERT INTO files (name, folder_id, owner_id, size, mime_type, stored_name) VALUES (?,?,?,?,?,?)')
-                        ->execute([$orig, $current['id'] ?? null, $uid, (int)$_FILES['files']['size'][$i], $_FILES['files']['type'][$i] ?: null, $stored]);
+                    $pdo->prepare('INSERT INTO files (name, folder_id, owner_id, size, mime_type, stored_name, created_at) VALUES (?,?,?,?,?,?,?)')
+                        ->execute([$orig, $current['id'] ?? null, $uid, (int)$_FILES['files']['size'][$i], $_FILES['files']['type'][$i] ?: null, $stored, now_jst()]);
                     $newId = (int)$pdo->lastInsertId();
                     audit_log($pdo, $user, 'file_upload', 'file', $newId, $orig, ['size'=>(int)$_FILES['files']['size'][$i], 'folder_id'=>$current['id']??null]);
                     $successCount++;
@@ -176,7 +176,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$isAdmin && (int)$f['owner_id'] !== $uid) {
                 flash_set('削除権限がありません（所有者のみ削除可能です）。', 'error');
             } else {
-                $pdo->prepare('UPDATE files SET deleted_at = CURRENT_TIMESTAMP WHERE id=?')->execute([$id]);
+                $pdo->prepare('UPDATE files SET deleted_at = ? WHERE id=?')->execute([now_jst(), $id]);
                 audit_log($pdo, $user, 'file_trash', 'file', $id, $f['name']);
                 flash_set('ファイルをゴミ箱へ移動しました。', 'success');
             }
@@ -206,8 +206,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $cnt->execute(array_merge([$uid], $allFolderIds));
                 $other = (int)$cnt->fetch()['c'];
                 // 論理削除（カスケード）
-                $pdo->prepare("UPDATE folders SET deleted_at=CURRENT_TIMESTAMP WHERE id IN ($in)")->execute($allFolderIds);
-                $pdo->prepare("UPDATE files SET deleted_at=CURRENT_TIMESTAMP WHERE folder_id IN ($in)")->execute($allFolderIds);
+                $jstNow = now_jst();
+                $pdo->prepare("UPDATE folders SET deleted_at=? WHERE id IN ($in)")->execute(array_merge([$jstNow], $allFolderIds));
+                $pdo->prepare("UPDATE files SET deleted_at=? WHERE folder_id IN ($in)")->execute(array_merge([$jstNow], $allFolderIds));
                 audit_log($pdo, $user, 'folder_trash', 'folder', $id, $f['name'], ['cascade_folders'=>count($allFolderIds), 'others_files'=>$other]);
                 flash_set('フォルダをゴミ箱へ移動しました' . ($other ? "（他ユーザのファイル {$other} 件含む）" : '') . '。', 'success');
             }

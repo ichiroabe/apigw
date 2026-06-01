@@ -46,14 +46,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($orig !== '' && strlen($orig) <= 255) {
                     $stored = bin2hex(random_bytes(16));
                     if (move_uploaded_file($_FILES['attachment']['tmp_name'], storage_dir().'/'.$stored)) {
-                        $pdo->prepare('INSERT INTO files (name, folder_id, owner_id, size, mime_type, stored_name) VALUES (?,?,?,?,?,?)')
-                            ->execute([$orig, null, $uid, (int)$_FILES['attachment']['size'], $_FILES['attachment']['type'] ?: null, $stored]);
+                        $pdo->prepare('INSERT INTO files (name, folder_id, owner_id, size, mime_type, stored_name, created_at) VALUES (?,?,?,?,?,?,?)')
+                            ->execute([$orig, null, $uid, (int)$_FILES['attachment']['size'], $_FILES['attachment']['type'] ?: null, $stored, now_jst()]);
                         $attachId = (int)$pdo->lastInsertId();
                     }
                 }
             }
-            $pdo->prepare('INSERT INTO posts (sender_id, recipient_id, subject, body, parent_post_id, attachment_file_id) VALUES (?,?,?,?,NULL,?)')
-                ->execute([$uid, $primary, $subject, $body, $attachId]);
+            $pdo->prepare('INSERT INTO posts (sender_id, recipient_id, subject, body, parent_post_id, attachment_file_id, created_at) VALUES (?,?,?,?,NULL,?,?)')
+                ->execute([$uid, $primary, $subject, $body, $attachId, now_jst()]);
             $pid = (int)$pdo->lastInsertId();
             save_post_recipients($pdo, $pid, $primaryAll ? null : null, $primaryAll ? array_merge([null], $userIds) : $userIds);
             audit_log($pdo, $user, 'post_create', 'post', $pid, $subject, ['recipients_all'=>$primaryAll, 'recipient_user_ids'=>$userIds]);
@@ -69,8 +69,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         elseif ($user['role'] !== 'admin' && (int)$p['sender_id'] !== $uid) { flash_set('編集権限がありません。','error'); }
         elseif ($subject === '' || $body === '') { flash_set('件名と本文は必須です。','error'); }
         else {
-            $pdo->prepare('UPDATE posts SET subject=?, body=?, updated_at=CURRENT_TIMESTAMP WHERE id=?')
-                ->execute([$subject, $body, $id]);
+            $pdo->prepare('UPDATE posts SET subject=?, body=?, updated_at=? WHERE id=?')
+                ->execute([$subject, $body, now_jst(), $id]);
             audit_log($pdo, $user, 'post_edit', 'post', $id, $subject);
             flash_set('投稿を更新しました。','success');
         }
@@ -83,9 +83,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         else {
             // 親なら子も論理削除
             if ($p['parent_post_id'] === null) {
-                $pdo->prepare('UPDATE posts SET deleted_at=CURRENT_TIMESTAMP WHERE id=? OR parent_post_id=?')->execute([$id,$id]);
+                $pdo->prepare('UPDATE posts SET deleted_at=? WHERE id=? OR parent_post_id=?')->execute([now_jst(),$id,$id]);
             } else {
-                $pdo->prepare('UPDATE posts SET deleted_at=CURRENT_TIMESTAMP WHERE id=?')->execute([$id]);
+                $pdo->prepare('UPDATE posts SET deleted_at=? WHERE id=?')->execute([now_jst(),$id]);
             }
             audit_log($pdo, $user, 'post_trash', 'post', $id, $p['subject']);
             flash_set('投稿をゴミ箱へ移動しました。','success');
