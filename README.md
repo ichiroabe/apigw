@@ -16,6 +16,20 @@ php -S localhost:8080 router.php
 ```
 ブラウザで http://localhost:8080/ を開く。
 
+## Android（Termux）での起動方法
+
+[Termux](https://f-droid.org/en/packages/com.termux/) をインストール後、以下を実行:
+
+```bash
+# セットアップ（初回のみ）
+bash termux-setup.sh
+
+# サーバ起動
+php -S 0.0.0.0:8080 router.php
+```
+
+Android のブラウザで `http://localhost:8080/` を開く。
+
 > 内蔵サーバは `.htaccess` を読まないため、`router.php` で `data/`, `phpfilefolder/`, `includes/` への直接アクセスを遮断しています。Apache/IIS 等で運用する場合は `.htaccess` が効くので `router.php` 無しでも安全です。
 
 初期ログイン: `admin` / `admin`
