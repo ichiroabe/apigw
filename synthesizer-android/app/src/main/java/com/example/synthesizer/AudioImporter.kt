@@ -99,8 +99,10 @@ class AudioImporter(private val context: Context) {
                 outputBuffer.order(ByteOrder.nativeOrder())
 
                 val outputFormat = codec.getOutputFormat(outputIndex)
-                val encoding = if (outputFormat.containsKey(MediaFormat.KEY_PCM_ENCODING))
-                    outputFormat.getInteger(MediaFormat.KEY_PCM_ENCODING)
+                @Suppress("DEPRECATION")
+                val pcmEncodingKey = "pcm-encoding" // MediaFormat.KEY_PCM_ENCODING (API 24+)
+                val encoding = if (outputFormat.containsKey(pcmEncodingKey))
+                    outputFormat.getInteger(pcmEncodingKey)
                 else
                     2 // ENCODING_PCM_16BIT
 
