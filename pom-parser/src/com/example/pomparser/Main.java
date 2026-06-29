@@ -30,12 +30,13 @@ public final class Main {
         PrintStream out;
         try {
             out = new PrintStream(System.out, true, "UTF-8");
+            System.setErr(new PrintStream(System.err, true, "UTF-8"));
         } catch (Exception e) {
             out = System.out;
         }
 
         if (args.length < 1) {
-            System.err.println("使い方: java -cp out com.example.pomparser.Main <フォルダ> [--csv] [--props] [--include-target]");
+            System.err.println("使い方: java -cp out com.example.pomparser.Main <フォルダ> [--csv] [--props] [--include-target] [--strict]");
             System.exit(2);
             return;
         }
@@ -44,10 +45,12 @@ public final class Main {
         boolean csv = false;
         boolean showProps = false;
         boolean includeTarget = false;
+        boolean strict = false;
         for (int i = 1; i < args.length; i++) {
             if ("--csv".equals(args[i])) csv = true;
             else if ("--props".equals(args[i])) showProps = true;
             else if ("--include-target".equals(args[i])) includeTarget = true;
+            else if ("--strict".equals(args[i])) strict = true;
             else {
                 System.err.println("不明なオプション: " + args[i]);
                 System.exit(2);
@@ -82,10 +85,39 @@ public final class Main {
 
         PomResolver resolver = new PomResolver(poms);
 
+        // 全依存を一度解決し、集計（出力と strict 判定で共用）
+        int total = 0;
+        int unresolvedExternal = 0;
+        int unresolvedSuspect = 0;
+        for (Pom pom : poms) {
+            for (ResolvedDependency d : resolver.resolveDependencies(pom)) {
+                total++;
+                if (!d.isResolved()) {
+                    if (d.suspect) unresolvedSuspect++;
+                    else unresolvedExternal++;
+                }
+            }
+        }
+
         if (csv) {
             printCsv(out, poms, resolver);
         } else {
             printText(out, root, poms, resolver, showProps);
+        }
+
+        // サマリ
+        out.println();
+        out.println("---- サマリ ----");
+        out.println("  依存総数            : " + total);
+        out.println("  解決済み            : " + (total - unresolvedExternal - unresolvedSuspect));
+        out.println("  未解決(ツリー外)    : " + unresolvedExternal + "  ← 親/BOM がスキャン対象外。リモート取得が必要");
+        out.println("  未解決(ツリー完結)  : " + unresolvedSuspect + "  ← 親/BOM は揃っているのに未解決。Maven ならエラーのはず（要確認）");
+        out.flush();
+
+        if (strict && unresolvedSuspect > 0) {
+            System.err.println("strict: ツリー完結なのに未解決の依存が " + unresolvedSuspect
+                    + " 件あります（Maven ならビルドエラーのはず）。");
+            System.exit(3);
         }
     }
 
@@ -145,14 +177,15 @@ public final class Main {
             } else {
                 out.println("  依存 (" + deps.size() + "):");
                 for (ResolvedDependency d : deps) {
-                    String ver = d.resolvedVersion != null ? d.resolvedVersion : "(未解決)";
+                    boolean ok = d.isResolved();
+                    String ver = ok ? d.resolvedVersion : "(未解決)";
                     StringBuilder line = new StringBuilder();
-                    line.append("    - ").append(d.groupId).append(":").append(d.artifactId)
+                    line.append(d.suspect ? "    ! " : "    - ")
+                        .append(d.groupId).append(":").append(d.artifactId)
                         .append(" : ").append(ver);
                     if (d.scope != null) line.append(" [").append(d.scope).append("]");
                     line.append("  <").append(d.origin).append(">");
-                    if (d.resolvedVersion != null && d.rawVersion != null
-                            && !d.resolvedVersion.equals(d.rawVersion)) {
+                    if (ok && d.rawVersion != null && !d.resolvedVersion.equals(d.rawVersion)) {
                         line.append("  (raw: ").append(d.rawVersion).append(")");
                     }
                     out.println(line.toString());
@@ -164,15 +197,16 @@ public final class Main {
     // ---- CSV 出力 ----
 
     private static void printCsv(PrintStream out, List<Pom> poms, PomResolver resolver) {
-        out.println("project,pomFile,depGroupId,depArtifactId,resolvedVersion,rawVersion,scope,versionOrigin");
+        out.println("project,pomFile,depGroupId,depArtifactId,resolvedVersion,rawVersion,scope,versionOrigin,resolved,suspect");
         for (Pom pom : poms) {
             String project = pom.coordinate().gav();
             String path = pom.file.getAbsolutePath();
             for (ResolvedDependency d : resolver.resolveDependencies(pom)) {
                 out.println(csv(project) + "," + csv(path) + ","
                         + csv(d.groupId) + "," + csv(d.artifactId) + ","
-                        + csv(d.resolvedVersion) + "," + csv(d.rawVersion) + ","
-                        + csv(d.scope) + "," + csv(d.origin));
+                        + csv(d.isResolved() ? d.resolvedVersion : null) + "," + csv(d.rawVersion) + ","
+                        + csv(d.scope) + "," + csv(d.origin) + ","
+                        + d.isResolved() + "," + d.suspect);
             }
         }
     }

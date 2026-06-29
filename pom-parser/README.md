@@ -6,6 +6,8 @@
 - **親子関係を考慮**: `<parent>` を辿り、子で未定義の groupId / version を親から継承します。
 - **プロパティを先読み**: 親チェーン全体の `<properties>` を集約し、`${...}` を展開します（子が親を上書き）。
 - **親での定義を考慮**: `<dependencyManagement>`（親含む）からバージョンを解決します。
+- **BOM インポート対応**: `<type>pom</type><scope>import</scope>` の BOM を、スキャン対象フォルダ内にあれば取り込んで解決します（BOM 自身のプロパティで解決。明示宣言が BOM より優先）。
+- **未解決理由の区別**: バージョンを解決できなかった場合、「親 / BOM がツリー外（取得が必要）」なのか「ツリー内に揃っているのに未解決（Maven ならビルドエラーのはず＝要確認）」なのかを区別表示します。
 - **JDK 1.8 標準ライブラリのみ**: 外部依存なし（`javax.xml` の DOM パーサを使用）。
 
 ## ビルド
@@ -38,6 +40,7 @@ java -cp out com.example.pomparser.Main <フォルダ> [オプション]
 | `--csv`              | CSV 形式で出力（既定はテキスト）                 |
 | `--props`            | 各プロジェクトの実効プロパティも表示             |
 | `--include-target`   | `target` ディレクトリ配下も走査（既定は除外）    |
+| `--strict`           | 「ツリー完結なのに未解決」が 1 件でもあれば終了コード 3 で異常終了 |
 
 `.git` ディレクトリと（既定で）`target` ディレクトリは走査対象から除外します。
 
@@ -52,9 +55,12 @@ java -cp out com.example.pomparser.Main <フォルダ> [オプション]
     - junit:junit : 4.13.2 [test]  <dependencyManagement>  (raw: ${junit.version})
 ```
 
-- `<...>` はバージョンの**出所**を示します（`dependency` / `dependencyManagement` / `unresolved`）。
+- `<...>` はバージョンの**出所**を示します（`dependency` / `dependencyManagement` / `bomImport:<BOM座標>` / `unresolved(...)`）。
 - `raw:` は `pom.xml` に書かれていた展開前の値です。
 - バージョンを解決できなかった場合は `(未解決)` と表示します。
+  - `unresolved(external?)` … 親 / BOM がスキャン対象フォルダの外。ローカルだけでは解決不可（リモート取得が必要）。
+  - `unresolved(tree-complete!)` … 親 / BOM はツリー内に揃っているのに未解決。**Maven ならビルドエラーになるはず**で、行頭に `!` を付けて強調表示します（ツールの取りこぼし、または pom 異常の疑い）。
+- 末尾に **サマリ**（依存総数 / 解決済み / 未解決(ツリー外) / 未解決(ツリー完結)）を出力します。
 
 ## 出力例（CSV）
 
@@ -74,10 +80,13 @@ com.demo:module-a:1.0.0,.../moduleA/pom.xml,com.google.guava,guava,32.1.3-jre,${
 
 ## 制限事項
 
-- BOM（`<scope>import</scope>` の `dependencyManagement` インポート）は未対応です。
-- リモートリポジトリからの親 POM 取得は行いません。親はスキャン対象フォルダ内で
-  解決できた場合のみ継承します（ツリー外の親は座標のみ表示します）。
-- プロファイルによる依存の追加・上書きは考慮しません。
+- リモートリポジトリからの親 POM / BOM 取得は行いません。親・BOM はスキャン対象
+  フォルダ内で解決できた場合のみ継承・取り込みします（ツリー外は `unresolved(external?)`）。
+- プロファイル（`<profiles>`）による依存・プロパティの追加・上書きは考慮しません。
+  このため、プロファイルでのみ version が決まる依存は `unresolved(tree-complete!)`
+  になることがあります。
+- 対応する組み込みプロパティは `project.*` / `pom.*` / `project.parent.*` と、
+  システムプロパティ・`${env.XXX}` のフォールバックに限られます。
 
 ## ディレクトリ構成
 

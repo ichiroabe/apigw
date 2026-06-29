@@ -1,17 +1,21 @@
 package com.example.pomparser;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
- * パース済みの Pom 群に対し、親子関係・プロパティ・dependencyManagement を
- * 考慮してライブラリとバージョンを解決する。
+ * パース済みの Pom 群に対し、親子関係・プロパティ・dependencyManagement・
+ * BOM インポートを考慮してライブラリとバージョンを解決する。
  *
  * 解決の優先順位（バージョン）:
  *   1. dependency に直接書かれた version（${...} 展開）
  *   2. 自身～親チェーンの dependencyManagement の version（${...} 展開）
+ *      - うち BOM インポート (type=pom, scope=import) は、ツリー内の BOM を
+ *        その BOM 自身のプロパティで解決して取り込む（明示宣言が優先）。
  * プロパティは「親を先に読み、子で上書き」した実効プロパティ表を用いる。
  */
 final class PomResolver {
@@ -32,6 +36,24 @@ final class PomResolver {
         }
     }
 
+    /** dependencyManagement の 1 エントリの解決状態。 */
+    private static final class ManagedEntry {
+        final String scope;
+        final String rawVersion;       // 明示エントリの生 version（後で消費側 props で展開）
+        final String resolvedVersion;  // BOM 由来などの確定 version
+        final boolean preResolved;     // true なら resolvedVersion を使う
+        final String origin;
+
+        ManagedEntry(String scope, String rawVersion, String resolvedVersion,
+                     boolean preResolved, String origin) {
+            this.scope = scope;
+            this.rawVersion = rawVersion;
+            this.resolvedVersion = resolvedVersion;
+            this.preResolved = preResolved;
+            this.origin = origin;
+        }
+    }
+
     /** 親 Pom をスキャン結果から解決（GAV 優先、無ければ GA）。 */
     private Pom findParent(Pom p) {
         if (p.parentCoordinate == null) return null;
@@ -42,29 +64,27 @@ final class PomResolver {
         return null;
     }
 
-    /**
-     * 実効プロパティ表を構築する。
-     * 親チェーンを根（最上位の親）から順に適用し、子で上書きする = 子優先。
-     * さらに project.* の組み込みプロパティを付与する。
-     */
-    Map<String, String> effectiveProperties(Pom pom) {
-        Map<String, String> result = new LinkedHashMap<String, String>();
-
-        // 親チェーンを根から子の順に並べる
+    /** 親チェーンを根（最上位）→自身の順に並べて返す。 */
+    private List<Pom> chainRootFirst(Pom pom) {
         List<Pom> chain = new ArrayList<Pom>();
         Pom cur = pom;
         int guard = 0;
         while (cur != null && guard++ < 100) {
-            chain.add(0, cur); // 先頭に挿入 -> 根が先頭に来る
+            chain.add(0, cur);
             cur = cur.resolvedParent;
         }
+        return chain;
+    }
 
-        // 根 -> 子 の順にプロパティを適用（子が後勝ち）
-        for (Pom p : chain) {
+    /**
+     * 実効プロパティ表を構築する。
+     * 親チェーンを根から順に適用し子で上書き（子優先）。project.* 等も付与。
+     */
+    Map<String, String> effectiveProperties(Pom pom) {
+        Map<String, String> result = new LinkedHashMap<String, String>();
+        for (Pom p : chainRootFirst(pom)) {
             result.putAll(p.properties);
         }
-
-        // 組み込みプロパティ（自身の値を優先）
         putIfNotNull(result, "project.groupId", pom.effectiveGroupId());
         putIfNotNull(result, "project.artifactId", pom.effectiveArtifactId());
         putIfNotNull(result, "project.version", pom.effectiveVersion());
@@ -83,31 +103,76 @@ final class PomResolver {
         if (v != null) m.put(k, v);
     }
 
+    private static boolean isBomImport(Dependency d) {
+        return "import".equals(d.scope) && "pom".equals(d.type);
+    }
+
     /**
-     * 自身～親チェーンの dependencyManagement をマージした表（GA -> Dependency）。
-     * 子が後勝ち（子の dependencyManagement が親を上書き）。
+     * 自身～親チェーンの dependencyManagement をマージした表（GA -> ManagedEntry）。
+     * BOM インポートは展開して取り込み、明示宣言が優先（インポートより上位）。
+     * 子が親を上書きする。
      */
-    Map<String, Dependency> effectiveDependencyManagement(Pom pom) {
-        Map<String, Dependency> dm = new LinkedHashMap<String, Dependency>();
-        List<Pom> chain = new ArrayList<Pom>();
-        Pom cur = pom;
-        int guard = 0;
-        while (cur != null && guard++ < 100) {
-            chain.add(0, cur);
-            cur = cur.resolvedParent;
-        }
-        for (Pom p : chain) {
+    private Map<String, ManagedEntry> effectiveDependencyManagement(Pom pom, Set<String> visiting) {
+        Map<String, ManagedEntry> imported = new LinkedHashMap<String, ManagedEntry>();
+        Map<String, ManagedEntry> explicit = new LinkedHashMap<String, ManagedEntry>();
+
+        for (Pom p : chainRootFirst(pom)) {
+            Map<String, String> propsP = effectiveProperties(p);
             for (Dependency d : p.dependencyManagement) {
-                dm.put(d.ga(), d);
+                if (isBomImport(d)) {
+                    String g = substitute(d.groupId, propsP);
+                    String a = substitute(d.artifactId, propsP);
+                    String v = substitute(d.version, propsP);
+                    String gav = (g == null ? "" : g) + ":" + (a == null ? "" : a) + ":" + (v == null ? "" : v);
+                    if (visiting.contains(gav)) continue; // 循環
+                    Pom bom = byGav.get(gav);
+                    if (bom == null) bom = byGa.get((g == null ? "" : g) + ":" + (a == null ? "" : a));
+                    if (bom == null) continue; // ツリー外 BOM は取り込めない
+                    visiting.add(gav);
+                    Map<String, ManagedEntry> bomDm = resolvedDependencyManagement(bom, visiting);
+                    visiting.remove(gav);
+                    String label = "bomImport:" + bom.coordinate().gav();
+                    for (Map.Entry<String, ManagedEntry> e : bomDm.entrySet()) {
+                        ManagedEntry me = e.getValue();
+                        imported.put(e.getKey(),
+                                new ManagedEntry(me.scope, null, me.resolvedVersion, true, label));
+                    }
+                } else {
+                    explicit.put(d.ga(),
+                            new ManagedEntry(d.scope, d.version, null, false, "dependencyManagement"));
+                }
             }
         }
-        return dm;
+        Map<String, ManagedEntry> result = new LinkedHashMap<String, ManagedEntry>(imported);
+        result.putAll(explicit); // 明示宣言がインポートを上書き
+        return result;
+    }
+
+    /**
+     * BOM 取り込み用: 当該 pom の dependencyManagement を「その pom 自身の
+     * プロパティ」で確定値まで解決して返す。
+     */
+    private Map<String, ManagedEntry> resolvedDependencyManagement(Pom bom, Set<String> visiting) {
+        Map<String, ManagedEntry> dm = effectiveDependencyManagement(bom, visiting);
+        Map<String, String> propsBom = effectiveProperties(bom);
+        Map<String, ManagedEntry> out = new LinkedHashMap<String, ManagedEntry>();
+        for (Map.Entry<String, ManagedEntry> e : dm.entrySet()) {
+            ManagedEntry me = e.getValue();
+            if (me.preResolved) {
+                out.put(e.getKey(), me);
+            } else {
+                out.put(e.getKey(), new ManagedEntry(
+                        me.scope, null, substitute(me.rawVersion, propsBom), true, me.origin));
+            }
+        }
+        return out;
     }
 
     /** 1 つの pom の依存を解決してリストで返す。 */
     List<ResolvedDependency> resolveDependencies(Pom pom) {
         Map<String, String> props = effectiveProperties(pom);
-        Map<String, Dependency> dm = effectiveDependencyManagement(pom);
+        Map<String, ManagedEntry> dm = effectiveDependencyManagement(pom, new HashSet<String>());
+        boolean external = dependsOnOutsideTree(pom);
 
         List<ResolvedDependency> out = new ArrayList<ResolvedDependency>();
         for (Dependency d : pom.dependencies) {
@@ -123,22 +188,71 @@ final class PomResolver {
                 resolved = substitute(d.version, props);
                 origin = "dependency";
             } else {
-                Dependency managed = dm.get(d.ga());
-                if (managed != null && managed.version != null) {
-                    rawVersion = managed.version;
-                    resolved = substitute(managed.version, props);
-                    origin = "dependencyManagement";
+                ManagedEntry me = dm.get(d.ga());
+                if (me != null && me.preResolved && me.resolvedVersion != null) {
+                    resolved = me.resolvedVersion;
+                    origin = me.origin;
+                } else if (me != null && me.rawVersion != null) {
+                    rawVersion = me.rawVersion;
+                    resolved = substitute(me.rawVersion, props);
+                    origin = me.origin;
                 } else {
                     resolved = null;
-                    origin = "unresolved";
+                    origin = external ? "unresolved(external?)" : "unresolved(tree-complete!)";
                 }
-                if (scope == null && managed != null) {
-                    scope = substitute(managed.scope, props);
+                if (scope == null && me != null) {
+                    scope = me.scope;
                 }
             }
-            out.add(new ResolvedDependency(groupId, artifactId, rawVersion, resolved, scope, origin));
+
+            boolean unresolved = (resolved == null) || resolved.indexOf("${") >= 0;
+            // ツリー内に親/BOM が揃っているのに未解決 = Maven ならエラーのはずの疑わしい状態
+            boolean suspect = unresolved && !external;
+            if (unresolved && resolved != null) {
+                // ${...} が残った = プロパティ未定義。ツリー完結なら疑わしい
+                origin = external ? "unresolved(external?)" : "unresolved(tree-complete!)";
+            }
+            out.add(new ResolvedDependency(groupId, artifactId, rawVersion, resolved, scope, origin, suspect));
         }
         return out;
+    }
+
+    /**
+     * この pom がスキャンツリーの外に依存解決を頼っている可能性があるか。
+     * - 親チェーンの最上位がまだ外部親を持つ（親がツリー外）
+     * - BOM インポートでツリー外の BOM を参照している
+     * いずれかなら true（= 未解決でも「ツリー外なので仕方ない」と分類できる）。
+     */
+    private boolean dependsOnOutsideTree(Pom pom) {
+        List<Pom> chain = chainRootFirst(pom);
+        Pom root = chain.get(0);
+        if (root.parentCoordinate != null && root.resolvedParent == null) {
+            return true; // 最上位の親がツリー外
+        }
+        return hasMissingBomImport(pom, new HashSet<String>());
+    }
+
+    /** 親チェーン上の BOM インポートに、ツリー内で見つからないものがあるか。 */
+    private boolean hasMissingBomImport(Pom pom, Set<String> visiting) {
+        for (Pom p : chainRootFirst(pom)) {
+            Map<String, String> propsP = effectiveProperties(p);
+            for (Dependency d : p.dependencyManagement) {
+                if (!isBomImport(d)) continue;
+                String g = substitute(d.groupId, propsP);
+                String a = substitute(d.artifactId, propsP);
+                String v = substitute(d.version, propsP);
+                String gav = (g == null ? "" : g) + ":" + (a == null ? "" : a) + ":" + (v == null ? "" : v);
+                if (visiting.contains(gav)) continue;
+                Pom bom = byGav.get(gav);
+                if (bom == null) bom = byGa.get((g == null ? "" : g) + ":" + (a == null ? "" : a));
+                if (bom == null) return true;
+                visiting.add(gav);
+                boolean nested = hasMissingBomImport(bom, visiting);
+                visiting.remove(gav);
+                if (nested) return true;
+            }
+        }
+        return false;
     }
 
     /**
