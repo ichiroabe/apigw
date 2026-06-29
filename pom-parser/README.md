@@ -14,23 +14,28 @@
 
 JDK 1.8 以上が必要です。
 
+ソースは **`PomParser.java` 1 ファイル**（パッケージ無し）です。
+
 ```sh
 # Linux / macOS
-./build.sh
+./build.sh        # 中身は javac PomParser.java
 
 # Windows
 build.bat
+
+# 直接コンパイルしても可
+javac PomParser.java
 ```
 
-`out/` にクラスファイルが生成されます。
+カレントに `*.class` が生成されます。
 
-> 注: JDK 1.8 でビルドする場合は `javac -d out src/com/example/pomparser/*.java` だけで構いません。
-> ビルドスクリプトでは新しい JDK でも 1.8 互換になるよう `-source 8 -target 8` を付けています。
+> 注: JDK 11 以降なら single-file source-code 実行でコンパイル不要で動かせます:
+> `java PomParser.java <フォルダ>`
 
 ## 実行
 
 ```sh
-java -cp out com.example.pomparser.Main <フォルダ> [オプション]
+java PomParser <フォルダ> [オプション]
 ```
 
 ### オプション
@@ -94,12 +99,10 @@ com.demo:module-a:1.0.0,.../moduleA/pom.xml,com.google.guava,guava,32.1.3-jre,${
 pom-parser/
 ├── README.md
 ├── build.sh / build.bat
-└── src/com/example/pomparser/
-    ├── Main.java               エントリポイント（走査・出力）
-    ├── PomReader.java          pom.xml を DOM で読み生データ化
-    ├── PomResolver.java        親子・プロパティ・depMgmt 解決
-    ├── Pom.java                pom 1 件のモデル
-    ├── Coordinate.java         groupId:artifactId:version
-    ├── Dependency.java         dependency / depMgmt の 1 エントリ
-    └── ResolvedDependency.java 解決後の依存
+├── PomParser.java     本体（単一ファイル・パッケージ無し）
+└── sample/            動作確認用サンプル pom
 ```
+
+`PomParser.java` 内に補助クラス（`Coordinate` / `Dependency` / `Pom` /
+`ResolvedDependency` / `PomReader` / `PomResolver`）を package-private で
+まとめています（`public` は `PomParser` のみ）。
